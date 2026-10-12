@@ -1,0 +1,2 @@
+# Stage 1. The installed version and command help are checked at runtime.
+pymobiledevice3
