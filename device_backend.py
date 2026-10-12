@@ -544,16 +544,17 @@ class DeviceBackend:
                 self.last_error = friendly_error(exc, "Clear location")
                 raise self.last_error from exc
 
-    async def close(self) -> None:
+    async def close(self, *, clear_location: bool = True) -> None:
+        """Release resources; explicit experimental detach may omit the Clear request."""
         errors: list[DeviceError] = []
         try:
-            if self.active:
+            if self.active and clear_location:
                 try:
                     await self.clear_location()
                 except Exception as exc:
                     error = friendly_error(exc, "shutdown location clear")
                     errors.append(DeviceError(error.code,
-                        "Shutdown could not confirm location was cleared. Unplug the iPhone to reset it. " + error.message,
+                        "Shutdown could not confirm location was cleared. Restart the iPhone and verify Maps. " + error.message,
                         error.detail))
         finally:
             try:
@@ -564,6 +565,7 @@ class DeviceBackend:
             self.rsd = None
             self.lockdown = None
             self.status.tunnel_running = False
+            self.active = False
         if errors:
             raise DeviceError("cleanup", "\n".join(error.message for error in errors),
                               "\n".join(error.detail for error in errors))
