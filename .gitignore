@@ -1,4 +1,6 @@
 .venv/
+.venv312/
+.venv-mac/
 .tmp/
 __pycache__/
 *.py[cod]

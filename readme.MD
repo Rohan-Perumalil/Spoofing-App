@@ -27,13 +27,17 @@ README.md
 
 ## Setup on your Mac
 
-Copy the project folder to your Mac's Desktop. Exclude the Windows `.venv`,
+Place the project in **`~/Projects/Spoofing-App`** on your Mac. Exclude the Windows `.venv`,
 `.tmp`, and `__pycache__` folders; create a fresh virtual environment on the Mac.
+
+macOS protects Desktop, Documents, and Downloads. An administrator helper can
+be denied access to a Python environment in those folders. Use the Projects
+location for both the checkout and its virtual environment.
 
 Open a native Terminal and run:
 
 ```sh
-cd "$HOME/Desktop/Spoofing App"
+cd "$HOME/Projects/Spoofing-App"
 python3 --version
 python3 -c 'import platform; print(platform.machine(), platform.mac_ver()[0])'
 python3 -m venv .venv
@@ -185,6 +189,7 @@ python -m pymobiledevice3 developer dvt simulate-location clear \
 | Developer Mode off | Enable it in Privacy & Security, restart, and confirm. |
 | Image not mounted | Run `python app.py mount`; inspect any download or personalization error. |
 | Tunnel not running | Retry and approve the administrator dialog. Close competing device tools if connection resets persist. |
+| Protected folder / `Operation not permitted` reading `pyvenv.cfg` | Move the checkout to `~/Projects/Spoofing-App` and create a fresh virtual environment there. |
 | Unsupported service | Run `pip install -U pymobiledevice3` and check [upstream GitHub issues](https://github.com/doronz88/pymobiledevice3/issues). |
 | Other failure | Expand technical details using `--details` or the interactive `details` command. |
 
@@ -199,6 +204,18 @@ Global options such as `--details` and `--udid` go before the command. Technical
 details are hidden by default. A successful Clear means the library sent the stop
 request; it does not return an acknowledged real-GPS position. Verify the result
 on the iPhone.
+
+If you initially cloned under Desktop and see `Operation not permitted` while
+the administrator helper reads `pyvenv.cfg`, move the checkout into Projects
+using Finder. Then recreate the environment rather than activating the moved one:
+
+```sh
+cd "$HOME/Projects/Spoofing-App"
+python3.12 -m venv .venv-mac
+source .venv-mac/bin/activate
+python -m pip install -U -r requirements.txt
+python app.py --details mount
+```
 
 ## Verification and pending work
 

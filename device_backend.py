@@ -198,6 +198,21 @@ def administrator_script(argv: list[str]) -> str:
     return f'with timeout of 2147483647 seconds\n do shell script "{escaped}" with administrator privileges\nend timeout'
 
 
+def tunnel_start_error(detail: str) -> DeviceError:
+    text = detail.lower()
+    if ("operation not permitted" in text or "permission denied" in text) and any(
+        folder in text for folder in ("/desktop/", "/documents/", "/downloads/")
+    ):
+        return DeviceError(
+            "protected_folder",
+            "macOS denied the administrator helper access to the project or Python environment "
+            "in a protected folder. Move the checkout to ~/Projects/Spoofing-App, create and "
+            "activate a fresh Python 3.12+ virtual environment there, install requirements, and retry.",
+            detail,
+        )
+    return DeviceError("tunnel_not_running", "The tunnel did not start. Approve the macOS administrator dialog and retry.", detail)
+
+
 class ManagedTunnel:
     """An elevated supervisor owns tunneld; control-socket EOF stops its child.
 
@@ -243,7 +258,7 @@ class ManagedTunnel:
             detail = ""
             if self._result in done:
                 detail = self._result.result()[0].decode(errors="replace")
-            raise DeviceError("tunnel_not_running", "The tunnel did not start. Approve the macOS administrator dialog and retry.", detail)
+            raise tunnel_start_error(detail)
         reader = connected.result()
         if await asyncio.wait_for(reader.readline(), 15) != b"started\n":
             raise DeviceError("tunnel_not_running", "The privileged tunnel helper did not start correctly.")

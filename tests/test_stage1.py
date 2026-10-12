@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import app
 from device_backend import (
     DeviceBackend, DeviceError, administrator_script, friendly_error,
-    require_supported_host, supervise_tunnel, tunnel_command, validate_coordinates,
+    require_supported_host, supervise_tunnel, tunnel_command, tunnel_start_error, validate_coordinates,
 )
 
 
@@ -67,6 +67,18 @@ class ValidationTests(unittest.TestCase):
         for arg in ("127.0.0.1", "49152", "--no-wifi", "--no-mobdev2", "--no-usbmux"):
             self.assertIn(arg, command)
         self.assertNotIn("--daemonize", command)
+
+    def test_protected_folder_permission_error_explains_recovery(self):
+        for folder in ("Desktop", "Documents", "Downloads"):
+            detail = f"PermissionError: [Errno 1] Operation not permitted: '/Users/test/{folder}/app/.venv312/pyvenv.cfg' (1)"
+            with self.subTest(folder=folder):
+                error = tunnel_start_error(detail)
+                self.assertEqual(error.code, "protected_folder")
+                self.assertIn("~/Projects/Spoofing-App", error.message)
+                self.assertIn("fresh Python 3.12+ virtual environment", error.message)
+                self.assertEqual(error.detail, detail)
+        self.assertEqual(tunnel_start_error("User canceled. (-128)").code, "tunnel_not_running")
+        self.assertEqual(tunnel_start_error("").code, "tunnel_not_running")
 
     def test_supervisor_eof_stops_only_its_child(self):
         control = Mock()
