@@ -1,4 +1,4 @@
-# USB iPhone location simulator — stage 1
+# USB iPhone location spoofer
 
 A macOS CLI that sets and clears a simulated GPS location on a USB-connected
 iPhone using the pymobiledevice3 Python API. Mounting and setting a location have
