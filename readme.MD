@@ -1,8 +1,74 @@
 # USB iPhone location simulator — stage 1
 
 A macOS CLI that sets and clears a simulated GPS location on a USB-connected
-iPhone using the pymobiledevice3 Python API. Stage 1 is ready for testing; the
-FastAPI backend, map UI, and route mode are deferred until that test passes.
+iPhone using the pymobiledevice3 Python API. Mounting and setting a location have
+been tested on the Mac and iPhone described below. A browser map and route mode
+are planned; the current app runs in Terminal.
+
+## Everyday use: set Cupertino
+
+Your working copy is in **`~/Projects/Spoofing-App`**, with the Python environment
+**`.venv-mac`**. Open that folder in VS Code if you want to edit the app.
+
+1. Connect your iPhone to the Mac with a USB data cable and unlock it.
+2. Open Terminal or the VS Code terminal and run:
+
+   ```sh
+   cd "$HOME/Projects/Spoofing-App" &&
+   source .venv-mac/bin/activate &&
+   python app.py --details set -- 37.3318 -122.0312
+   ```
+
+3. Approve the macOS administrator dialog using your Mac password.
+4. Wait for `Location set: 37.3318, -122.0312` and the `location>` prompt.
+5. Open Maps on the iPhone and tap its current-location button to verify Cupertino.
+
+Keep the terminal session open and the phone connected for reliable operation.
+If Set reports that the developer image is not mounted, run these commands
+separately, waiting for Mount to succeed before running Set:
+
+```sh
+python app.py --details mount
+python app.py --details set -- 37.3318 -122.0312
+```
+
+### Change or restore the location
+
+At `location>`, enter one of these commands and press Return. These are app
+commands, so do not prefix them with `python app.py`:
+
+| Command | What it does |
+| --- | --- |
+| `set 40.7128 -74.0060` | Change to New York City. |
+| `set 37.3318 -122.0312` | Change back to Cupertino. |
+| `clear` | Send the request to restore real GPS; keep the session open. |
+| `status` | Show connection and session status. |
+| `details` | Show details of the last error. |
+| `quit` | Clear the simulated location, close the session, and stop its tunnel. |
+
+Ctrl+C also runs shutdown cleanup. Check Maps to confirm your real location
+returns before disconnecting. To start again later, repeat the Everyday use
+commands above; you do not need to reinstall dependencies each time.
+
+### If you unplug the iPhone
+
+The app currently uses USB and cannot send further commands while disconnected.
+The phone may briefly or sometimes continue showing the simulated position, but
+the duration and reliability of that behavior are **not verified**. A position
+displayed in Maps immediately after unplugging is not proof of lasting simulation.
+The app does not guarantee operation without a connection to the Mac.
+
+To clear after unplugging, reconnect and unlock the phone, then try `clear` in the
+active session. If that session reports a connection error, exit it and run:
+
+```sh
+cd "$HOME/Projects/Spoofing-App" &&
+source .venv-mac/bin/activate &&
+python app.py --details clear
+```
+
+Approve the administrator dialog and verify the result in Maps. If Set or Clear
+fails, keep the full `--details` output for troubleshooting.
 
 ## Requirements
 
@@ -22,7 +88,7 @@ device_backend.py      Device API, command checks, and tunnel lifecycle
 requirements.txt       Unpinned pymobiledevice3 dependency
 static/                Reserved for the later Leaflet/OSM UI
 tests/test_stage1.py    Hardware-free validation and lifecycle tests
-README.md
+readme.MD
 ```
 
 ## Setup on your Mac
@@ -38,13 +104,17 @@ Open a native Terminal and run:
 
 ```sh
 cd "$HOME/Projects/Spoofing-App"
-python3 --version
-python3 -c 'import platform; print(platform.machine(), platform.mac_ver()[0])'
-python3 -m venv .venv
-source .venv/bin/activate
+/opt/homebrew/bin/python3.12 --version
+/opt/homebrew/bin/python3.12 -c 'import platform; print(platform.machine(), platform.mac_ver()[0])'
+/opt/homebrew/bin/python3.12 -m venv .venv-mac
+source .venv-mac/bin/activate
 python -m pip install -U -r requirements.txt
 python app.py doctor
 ```
+
+These commands use the Python 3.12 installation verified on this Mac. On another
+Mac, substitute the path to its native Python 3.12+ interpreter. If a command
+fails, stop and resolve it before continuing. Do not install into Conda `(base)`.
 
 The architecture check must print `arm64`, and Python must be 3.12 or newer.
 `doctor` detects the host/package versions and verifies installed command help
@@ -83,8 +153,8 @@ It does not start a tunnel or elevate. Its tunnel field describes this session,
 so it displays `no` until a Set/Clear/Mount invocation starts one. Unknown fields
 display `?`.
 
-`mount` starts its tunnel, uses the library's `auto_mount` API for the selected
-device, checks the location service, then closes its connections and tunnel.
+`mount` starts its tunnel, uses the library's `auto_mount` API if the image is not
+already mounted, checks the location service, then closes its connections and tunnel.
 Image downloads and personalization may require network access and use the
 library's usual cache outside this project.
 
@@ -141,16 +211,20 @@ python app.py --udid YOUR_IPHONE_UDID set -- 37.3318 -122.0312
 
 The app keeps its USB, RSD, DVT, and location connections open while a location is
 active. It sends Clear before closing those resources on graceful shutdown.
-**The location resets on unplug.** If shutdown cannot reach the device, it reports
-the failure and tells you to unplug the iPhone. Force-kill and power loss cannot
-send a Clear request.
+After unplugging, persistence is not guaranteed; see the usage instructions above.
+If shutdown cannot reach the device, it reports the failure. Reconnect and send
+Clear to restore real GPS explicitly. Force-kill and power loss cannot send a
+Clear request.
 
 Run the app as your normal user. It starts an elevated tunnel supervisor through
 `osascript` using `do shell script ... with administrator privileges`. The app
 never receives, stores, or logs the administrator password.
 
 The managed tunneld binds to `127.0.0.1` on an available port. Wi-Fi, mobdev2, and
-usbmux discovery are disabled, retaining native USB discovery. The supervisor
+usbmux monitoring are disabled. If native USB discovery finds no tunnel, the app
+requests a usbmux tunnel for the selected, USB-connected iPhone explicitly.
+The elevated helper supplies the invoking user's ownership information so the
+library's cache stays writable by the normal user. The supervisor
 connects to a private Unix socket before launching tunneld and stops its own child
 process group when the app closes the socket or exits. Normal shutdown needs no
 second administrator dialog. Existing tunnels are not reused or stopped.
@@ -211,7 +285,7 @@ using Finder. Then recreate the environment rather than activating the moved one
 
 ```sh
 cd "$HOME/Projects/Spoofing-App"
-python3.12 -m venv .venv-mac
+/opt/homebrew/bin/python3.12 -m venv .venv-mac
 source .venv-mac/bin/activate
 python -m pip install -U -r requirements.txt
 python app.py --details mount
@@ -226,16 +300,19 @@ tunneld help ran there. Full Windows dependency installation failed because
 Mount help could not load in that Windows environment because the compression
 module was absent. The Mac's `doctor` command checks it again.
 
-The 15 hardware-free validation/lifecycle tests passed during stage 1 development.
+The current 17 hardware-free validation/lifecycle tests passed on this Mac.
 Run them with:
 
 ```sh
 python -m unittest discover -s tests -v
 ```
 
-**On-device testing remains pending:** macOS detection, the administrator dialog,
-USB tunnel establishment, iOS 26.2 image mounting, Maps Set/Clear behavior, and
-tunnel termination require your Mac and iPhone.
+Verified on Apple Silicon macOS **26.5.1**, Python **3.12.15**, pymobiledevice3
+**11.27.2**, and iOS **26.2**: host checks, USB discovery, trust and Developer Mode
+checks, administrator-authorized tunnel startup, image mounting, location-service
+access, and successful Set. The user confirmed Cupertino in Maps. The corrected
+Mount command exited cleanly. Real-GPS restoration after Clear and reliable
+persistence after unplugging still need confirmation on the phone.
 
 After stage 1 passes, stage 2 adds FastAPI bound only to `127.0.0.1`, stage 3 adds
 the Leaflet/OpenStreetMap UI, and stage 4 adds waypoints, speed, and Start/Pause/Stop.

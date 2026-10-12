@@ -7,7 +7,9 @@ API checks fail explicitly if a different installed release changes them.
 from __future__ import annotations
 
 import asyncio
+import getpass
 import inspect
+import json
 import math
 import os
 import platform
@@ -26,6 +28,8 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from urllib.parse import urlencode
+from urllib.request import urlopen
 
 ISSUES_URL = "https://github.com/doronz88/pymobiledevice3/issues"
 MIN_MACOS = (26, 4)  # Updated from 27 at the user's request.
@@ -247,7 +251,11 @@ class ManagedTunnel:
 
         self._server = await asyncio.start_unix_server(accept, path=path)
         os.chmod(path, 0o600)
-        argv = [sys.executable, str(Path(__file__).resolve()), "--supervise-tunnel", path, str(self.port)]
+        # AppleScript elevation does not set sudo's ownership variables. Supply
+        # them so the library's cache remains owned by the invoking user.
+        argv = ["/usr/bin/env", f"SUDO_UID={os.getuid()}", f"SUDO_GID={os.getgid()}",
+                f"SUDO_USER={getpass.getuser()}",
+                sys.executable, str(Path(__file__).resolve()), "--supervise-tunnel", path, str(self.port)]
         self._proc = await asyncio.create_subprocess_exec(
             "/usr/bin/osascript", "-e", administrator_script(argv),
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
@@ -268,15 +276,30 @@ class ManagedTunnel:
             output = self._result.result()[0].decode(errors="replace")
             raise DeviceError("tunnel_not_running", "The managed tunnel stopped. Retry and approve the administrator dialog.", output)
 
+    async def connect_device(self, udid: str) -> None:
+        """Request the selected USB device rather than relying on NCM discovery."""
+        query = urlencode({"udid": udid, "connection_type": "usbmux"})
+
+        def request() -> None:
+            with urlopen(f"http://127.0.0.1:{self.port}/start-tunnel?{query}", timeout=45) as response:
+                result = json.load(response)
+            if not result.get("address") or not result.get("port"):
+                raise DeviceError("tunnel_not_running", "The tunnel could not connect to the selected USB iPhone.", str(result))
+
+        await asyncio.to_thread(request)
+
     async def close(self) -> None:
         if self._server:
             self._server.close()
-            await self._server.wait_closed()
         if self._writer:
             # EOF is sufficient, including when the main process crashes.
             self._writer.close()
             with suppress(OSError):
                 await self._writer.wait_closed()
+        if self._server:
+            # Python 3.12 waits for accepted connections as well as the listener.
+            # Close the control connection first so this cannot deadlock.
+            await self._server.wait_closed()
         try:
             if self._result:
                 try:
@@ -438,6 +461,7 @@ class DeviceBackend:
             await self._tunnel.start()
             address = ("127.0.0.1", self._tunnel.port)
             async with asyncio.timeout(TUNNEL_TIMEOUT):
+                requested = False
                 while self.rsd is None:
                     self._tunnel.check_alive()
                     await self._require_usb()
@@ -458,15 +482,31 @@ class DeviceBackend:
                         self.rsd = rsd
                         self.status.tunnel_running = True
                     else:
+                        if not requested:
+                            # Wait for the daemon's HTTP listener before requesting
+                            # a tunnel. USB presence is checked on every iteration.
+                            try:
+                                await self._tunnel.connect_device(self.status.udid)
+                            except ConnectionRefusedError:
+                                pass
+                            except OSError as exc:
+                                if not isinstance(getattr(exc, "reason", None), ConnectionRefusedError):
+                                    raise
+                            else:
+                                requested = True
                         await asyncio.sleep(0.5)
-            if mount:
+            if mount and not self.status.image_mounted:
                 try:
                     # This uses the selected device's RSD, including iOS 27 cryptex support.
                     await asyncio.wait_for(self.api.auto_mount(self.rsd), 300)
                 except Exception as exc:
                     if type(exc).__name__ != "AlreadyMountedError":
                         raise
-                await self._check_image(self.rsd)
+                # auto_mount returns after MountImage succeeds (or reports
+                # AlreadyMountedError). Reopening the image-mounter immediately
+                # can block while the library's mounting connection is alive.
+                # Opening DVT below verifies that the mounted image is usable.
+                self.status.image_mounted = True
             if not self.status.image_mounted:
                 raise DeviceError("image_not_mounted", "The developer image is still unavailable. Check the mount error and update pymobiledevice3.")
             dvt = await self._open_service(self.api.DvtProvider(self.rsd))

@@ -2,14 +2,16 @@
 
 import asyncio
 import io
+import os
 import signal
+import tempfile
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 import app
 from device_backend import (
-    DeviceBackend, DeviceError, administrator_script, friendly_error,
+    DeviceBackend, DeviceError, ManagedTunnel, administrator_script, friendly_error,
     require_supported_host, supervise_tunnel, tunnel_command, tunnel_start_error, validate_coordinates,
 )
 
@@ -105,6 +107,29 @@ class ValidationTests(unittest.TestCase):
 
 
 class LifecycleTests(unittest.IsolatedAsyncioTestCase):
+    @unittest.skipUnless(os.name == "posix", "Unix control sockets require POSIX")
+    async def test_tunnel_close_releases_accepted_control_connection(self):
+        # A real accepted socket catches the Python 3.12 server.wait_closed
+        # deadlock that mocks of server.close cannot reproduce.
+        tunnel = ManagedTunnel()
+        connected = asyncio.get_running_loop().create_future()
+
+        def accept(reader, writer):
+            tunnel._writer = writer
+            connected.set_result(None)
+
+        with tempfile.TemporaryDirectory(dir="/tmp") as directory:
+            path = directory + "/control.sock"
+            tunnel._server = await asyncio.start_unix_server(accept, path)
+            reader, writer = await asyncio.open_unix_connection(path)
+            try:
+                await connected
+                await asyncio.wait_for(tunnel.close(), 2)
+                self.assertEqual(await reader.read(), b"")
+            finally:
+                writer.close()
+                await writer.wait_closed()
+
     def make_backend(self):
         backend = DeviceBackend()
         backend.status.udid = "PHONE"
